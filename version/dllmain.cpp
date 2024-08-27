@@ -21,13 +21,23 @@
 #pragma comment(linker, "/EXPORT:VerQueryValueW=c:\\windows\\system32\\version.VerQueryValueW")
 #pragma endregion
 
-static BOOL OpenFileRead(CONST LPCSTR lpFileName, CONST LPHANDLE fileHandle)
-{
-	OFSTRUCT ofStruct{};
-	HFILE hFile = OpenFile(lpFileName, &ofStruct, OF_READ | OF_PROMPT);
+bool FileExists(LPCTSTR filename) {
+	HANDLE hFile = CreateFile(
+		filename,                // File name
+		GENERIC_READ,            // Desired access: read
+		FILE_SHARE_READ,         // Share mode: allow others to read
+		NULL,                    // Security attributes
+		OPEN_EXISTING,           // Creation disposition: open only if it exists
+		FILE_ATTRIBUTE_NORMAL,   // Flags and attributes
+		NULL);                   // Template file handle (not used)
 
-	*fileHandle = (HANDLE)(INT_PTR)hFile;  // NOLINT(performance-no-int-to-ptr)
-	return hFile != HFILE_ERROR;
+	if (hFile == INVALID_HANDLE_VALUE) {
+		return false; // File does not exist
+	}
+	else {
+		CloseHandle(hFile);
+		return true;  // File exists
+	}
 }
 
 BOOL APIENTRY DllMain(CONST HMODULE hModule, CONST DWORD fdwReason, CONST LPVOID lpvReserved)
@@ -35,13 +45,11 @@ BOOL APIENTRY DllMain(CONST HMODULE hModule, CONST DWORD fdwReason, CONST LPVOID
 	if (fdwReason != DLL_PROCESS_ATTACH)
 		return TRUE;
 
-	HANDLE hFile = NULL;
-	if (!OpenFileRead("fakereg.dll", &hFile))
+	if (!FileExists(L"fakereg.dll"))
 	{
 		MessageBoxA(NULL, "fakereg.dll not found", "version", MB_ICONERROR);
 		return FALSE;
 	}
-	CloseHandle(hFile);
 
 	if (!LoadLibraryA("fakereg.dll"))
 	{

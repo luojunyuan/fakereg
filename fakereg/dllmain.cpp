@@ -82,17 +82,27 @@ HKEY currentFakeHKey = fakeHKeyBase;
 
 #pragma region Operator to Modify ini file
 
-std::string NormalizeBackslashes(const std::string& input) {
+static std::string AddQuoteString(std::string key)
+{
+	return "\"" + std::move(key) + "\"";
+}
+static std::wstring RemoveQuoteWString(std::wstring key)
+{
+	key.erase(0, 1);
+	key.pop_back();
+	return key;
+}
+static std::string NormalizeBackslashes(const std::string& input) {
 	std::string output;
 	output.reserve(input.size());
 
 	for (size_t i = 0; i < input.size(); ++i) {
 		if (input[i] == '\\' && i + 1 < input.size() && input[i + 1] == '\\') {
-			output.push_back('\\'); // 添加一个反斜杠
-			++i; // 跳过下一个反斜杠
+			output.push_back('\\');
+			++i;
 		}
 		else {
-			output.push_back(input[i]); // 直接添加当前字符
+			output.push_back(input[i]);
 		}
 	}
 
@@ -115,15 +125,51 @@ static bool IniSectionExists(std::string sectionName) {
 static std::string ReadINIValue(std::string path, std::string key) {
 	wchar_t buffer[256];
 
+	auto keyQuote = AddQuoteString(key);
+
 	auto pathu = ShiftJISToUTF16(path);
-	auto keyu = ShiftJISToUTF16(key);
+	auto keyu = ShiftJISToUTF16(keyQuote);
 
 	auto result = GetPrivateProfileStringW(pathu.c_str(), keyu.c_str(), L"", buffer, sizeof(buffer) / sizeof(wchar_t), iniFilePath.c_str());
 
 	auto shiftjis = WideStringToShiftJIS(buffer);
 
-	// TODO: 理应确定是字符串或者path后再处理
+	// TODO 2: 理应确定是字符串或者path后再处理，考虑type怎么处理
 	return NormalizeBackslashes(shiftjis);
+}
+
+static std::string GetNthKeyValueInSection(const std::string& sectionName, int n) {
+	wchar_t keyBuffer[1024];
+
+	auto secu = ShiftJISToUTF16(sectionName);
+
+	// 获取指定 section 下的所有键名
+	DWORD charsRead = GetPrivateProfileStringW(
+		secu.c_str(),
+		NULL,
+		NULL,
+		keyBuffer,
+		sizeof(keyBuffer) / sizeof(wchar_t),
+		iniFilePath.c_str()
+	);
+
+	if (charsRead == 0) {
+		return "";
+	}
+
+	wchar_t* key = keyBuffer;
+	int currentIndex = 0;
+	while (*key) {
+		if (currentIndex == n) {
+			auto nkey = RemoveQuoteWString(key);
+			return WideStringToShiftJIS(nkey);
+		}
+
+		key += wcslen(key) + 1;
+		currentIndex++;
+	}
+
+	return "";
 }
 
 #pragma endregion
@@ -136,31 +182,23 @@ LONG WINAPI FakeRegOpenKeyExA(HKEY hKey, LPCSTR lpSubKey, DWORD ulOptions, REGSA
 	else if (hKey == HKEY_CURRENT_USER) {
 		baseKey = "HKEY_CURRENT_USER\\";
 	}
-	else
-	{
+	else {
 		return RealRegOpenKeyExA(hKey, lpSubKey, ulOptions, samDesired, phkResult);
 	}
 
 	auto fullPath = baseKey + lpSubKey;
 
-	// For debug
-	// OutputDebugStringA(ConvertShiftJISToGBK(fullPath).c_str());
-
-	// read ini file key, is equal to full Path, has the key
+	// read ini file key
 	if (!IniSectionExists(fullPath))
 		return RealRegOpenKeyExA(hKey, lpSubKey, ulOptions, samDesired, phkResult);
 
-	// SOURCE: The original behavior 取消注释以下两行来测试真实读取注册表的情况
-	//auto result = RealRegOpenKeyExA(hKey, lpSubKey, ulOptions, samDesired, phkResult);
-	//fakeHKeyMap[*phkResult] = fullPath;
-
-	// Solution
-	// 1. an abusolute exist reg
-	//auto result = RealRegOpenKeyExA(hKey, "SOFTWARE", ulOptions, samDesired, phkResult);
-	// 2.
 	HKEY fakeHKey = currentFakeHKey++;
 	fakeHKeyMap[fakeHKey] = fullPath;
 	*phkResult = fakeHKey;
+
+	// TEST: The original behavior 取消注释以下两行来测试真实读取注册表的情况
+	//auto result = RealRegOpenKeyExA(hKey, lpSubKey, ulOptions, samDesired, phkResult);
+	//fakeHKeyMap[*phkResult] = fullPath;
 
 	std::string message = OssFormatString("Open fake hKey ", *phkResult);
 	OutputDebugStringA(message.c_str());
@@ -201,27 +239,31 @@ static std::vector<BYTE> ParseHexData(const std::string& hexString) {
 	return data;
 }
 
+DWORD ParseDwordData(const std::string& dwordString) {
+	return std::stoul(dwordString.substr(6), nullptr, 16); // Skip "dword:" and convert
+}
+
 LONG WINAPI FakeRegQueryValueExA(HKEY hKey, LPCSTR lpValueName, LPDWORD lpReserved, LPDWORD lpType, LPBYTE lpData, LPDWORD lpcbData) {
 	auto it = fakeHKeyMap.find(hKey);
 	if (it == fakeHKeyMap.end())
 		return RealRegQueryValueExA(hKey, lpValueName, lpReserved, lpType, lpData, lpcbData);
 
-	// SOURCE: The original behavior
+	// TEST: The original behavior
+	// Value before called
 	//auto result = RealRegQueryValueExA(hKey, lpValueName, lpReserved, lpType, lpData, lpcbData);
-	//std::stringstream ss;
-	//ss << "Query key: " << lpValueName << " result: " << lpData;  // 打印 std::string 结果
+	// Value after called
 	//OutputDebugStringA(ss.str().c_str());
 	//return result;
 
 	std::string fullPath = it->second;
-	auto ikey = "\"" + std::string(lpValueName) + "\"";
-	std::string ival = ReadINIValue(fullPath, ikey);
+	std::string ival = ReadINIValue(fullPath, std::string(lpValueName));
 
 	if (!ival.empty()) {
-		std::string message = OssFormatString("Query key: ", ikey, " result: ", ival.c_str());
+		std::string message = OssFormatString("Query key: ", lpValueName, " result: ", ival.c_str());
 		OutputDebugStringA(message.c_str());
 
-		if (ival.find("hex:") == 0) {  // 处理 REG_BINARY 数据
+		// TODO 2: 考虑type怎么处理
+		if (ival.find("hex:") == 0) {  // 处理 REG_BINARY 数据 hex:00,00,00,00
 			auto binaryData = ParseHexData(ival);
 
 			if (lpData && lpcbData && *lpcbData >= binaryData.size()) {
@@ -234,6 +276,23 @@ LONG WINAPI FakeRegQueryValueExA(HKEY hKey, LPCSTR lpValueName, LPDWORD lpReserv
 				return ERROR_SUCCESS;
 			}
 			else {
+				return ERROR_MORE_DATA;  // 缓冲区太小
+			}
+		}
+		if (ival.find("dword:") == 0) {  // 处理 REG_DWORD 数据 dword:00000000
+			DWORD dwordValue = ParseDwordData(ival);
+
+			if (lpData && lpcbData && *lpcbData >= sizeof(DWORD)) {
+				memcpy(lpData, &dwordValue, sizeof(DWORD));
+				*lpcbData = sizeof(DWORD);
+
+				if (lpType) {
+					*lpType = REG_DWORD;
+				}
+				return ERROR_SUCCESS;
+			}
+			else {
+				*lpcbData = sizeof(DWORD);
 				return ERROR_MORE_DATA;  // 缓冲区太小
 			}
 		}
@@ -254,58 +313,24 @@ LONG WINAPI FakeRegQueryValueExA(HKEY hKey, LPCSTR lpValueName, LPDWORD lpReserv
 	}
 }
 
-LONG WINAPI FakeRegFlushKey(HKEY hKey) {
-	OutputDebugString(L"-Call FakeRegFlushKey");
-	return RealRegFlushKey(hKey);
-}
+// TODO 5:
 LONG WINAPI FakeRegSetValueExA(HKEY hKey, LPCSTR lpValueName, DWORD Reserved, DWORD dwType, const BYTE* lpData, DWORD cbData) {
 	OutputDebugString(L"-Call FakeRegSetValueExA");
 	return RealRegSetValueExA(hKey, lpValueName, Reserved, dwType, lpData, cbData);
 }
+// 如果游戏写注册表很可能会Flush
+LONG WINAPI FakeRegFlushKey(HKEY hKey) {
+	if (fakeHKeyMap.find(hKey) == fakeHKeyMap.end())
+		return RealRegFlushKey(hKey);
+
+	std::string message = OssFormatString("Flush fake hKey: ", hKey);
+	OutputDebugStringA(message.c_str());
+	return ERROR_SUCCESS;
+}
+
 LONG WINAPI FakeRegCreateKeyExA(HKEY hKey, LPCSTR lpSubKey, DWORD Reserved, LPSTR lpClass, DWORD dwOptions, REGSAM samDesired, LPSECURITY_ATTRIBUTES lpSecurityAttributes, PHKEY phkResult, LPDWORD lpdwDisposition) {
 	OutputDebugString(L"-Call FakeRegCreateKeyExA");
 	return RealRegCreateKeyExA(hKey, lpSubKey, Reserved, lpClass, dwOptions, samDesired, lpSecurityAttributes, phkResult, lpdwDisposition);
-}
-
-std::string GetNthKeyValueInSection(const std::string& sectionName, int n) {
-	wchar_t keyBuffer[1024];
-
-	auto secu = ShiftJISToUTF16(sectionName);
-
-	// 获取指定 section 下的所有键名
-	DWORD charsRead = GetPrivateProfileStringW(
-		secu.c_str(),
-		NULL,  // 传递 NULL 以获取所有键名
-		NULL,  // 默认值不需要
-		keyBuffer,
-		sizeof(keyBuffer) / sizeof(wchar_t),
-		iniFilePath.c_str()
-	);
-
-	// 如果没有读取到任何字符，表示 section 不存在或其他错误
-	if (charsRead == 0) {
-		return "";  // 返回空字符串表示没有找到
-	}
-
-	// 遍历键名，找到第 n 个键
-	wchar_t* key = keyBuffer;
-	int currentIndex = 0;
-	while (*key) {
-		if (currentIndex == n) {
-			return WideStringToShiftJIS(key);
-
-			// 获取第 n 个键对应的值
-			//wchar_t valueBuffer[256];
-			//GetPrivateProfileStringW(sectionName.c_str(), key, L"", valueBuffer, sizeof(valueBuffer) / sizeof(wchar_t), iniFilePath.c_str());
-			//return valueBuffer;
-		}
-
-		// 移动到下一个键名
-		key += wcslen(key) + 1;
-		currentIndex++;
-	}
-
-	return "";  // 如果没有找到第 n 个键，返回空字符串
 }
 
 bool ConvertStringToLPSTR(const std::string& str, LPSTR lpValueName, LPDWORD lpcchValueName) {
@@ -331,20 +356,15 @@ LONG WINAPI FakeRegEnumValueA(HKEY hKey, DWORD dwIndex, LPSTR lpValueName, LPDWO
 	if (fakeHKeyMap.find(hKey) == fakeHKeyMap.end())
 		return RealRegEnumValueA(hKey, dwIndex, lpValueName, lpcchValueName, lpReserved, lpType, lpData, lpcbData);
 
-	//auto result = RealRegEnumValueA(hKey, dwIndex, lpValueName, lpcchValueName, lpReserved, lpType, lpData, lpcbData);
-	//std::stringstream sso;
-	//sso << "Enum fake hKey " << hKey << " with " << lpValueName << "(" << *lpcchValueName << ") Type: " << *lpType;
-	//OutputDebugStringA(sso.str().c_str());
-	//return result;
-
 	std::string sec = fakeHKeyMap.find(hKey)->second;
 	std::string key = GetNthKeyValueInSection(sec, dwIndex);
 	if (key.empty())
 		return ERROR_NO_MORE_ITEMS;
 
-	auto keyNoQuote = key.substr(1, key.size() - 2); // remove quote
-	auto convertResult = ConvertStringToLPSTR(keyNoQuote, lpValueName, lpcchValueName);
+	// TODO 3: 这里比较奇怪
+	auto convertResult = ConvertStringToLPSTR(key, lpValueName, lpcchValueName);
 
+	// deal with type, if lpType is Null ?
 	//wchar_t valueBuffer[256];
 	//GetPrivateProfileStringW(sec.c_str(), key.c_str(), L"", valueBuffer, sizeof(valueBuffer) / sizeof(wchar_t), iniFilePath.c_str());
 	//if (wcsncmp(valueBuffer, L"hex:", 4) == 0) {
@@ -353,6 +373,7 @@ LONG WINAPI FakeRegEnumValueA(HKEY hKey, DWORD dwIndex, LPSTR lpValueName, LPDWO
 	//else {
 	//	*lpType = REG_SZ;
 	//}
+	// TODO 4: 把1实现然后仔细观察完善真实情况，理解每个函数用处
 
 	std::string message = OssFormatString("Enum fake hKey ", hKey, " with ", lpValueName, "(", *lpcchValueName, ")");
 	OutputDebugStringA(message.c_str());
@@ -387,8 +408,8 @@ BOOL APIENTRY DllMain(HMODULE hModule,
 		DetourAttach(&(PVOID&)RealRegEnumValueA, FakeRegEnumValueA);
 		// 部分游戏会写入到REG
 		DetourAttach(&(PVOID&)RealRegSetValueExA, FakeRegSetValueExA);
-
 		DetourAttach(&(PVOID&)RealRegFlushKey, FakeRegFlushKey);
+
 		DetourAttach(&(PVOID&)RealRegCreateKeyExA, FakeRegCreateKeyExA);
 		DetourAttach(&(PVOID&)RealRegOpenKeyA, FakeRegOpenKeyA);
 		DetourTransactionCommit();
