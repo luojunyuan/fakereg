@@ -3,10 +3,10 @@
 
 #include "detours.h"
 #include <string>
+#include <sstream>
 
 #include <map>
 #include <vector>
-#include <sstream>
 
 #pragma region String Converter
 
@@ -24,35 +24,28 @@ static std::string WideStringToShiftJIS(const std::wstring& wideString) {
 	return shiftjis;
 }
 
-static std::string WideStringToUTF8String(const std::wstring& wstr) {
-	if (wstr.empty())
-		return std::string();
-
-	int sizeNeeded = WideCharToMultiByte(CP_UTF8, 0, wstr.c_str(), -1, NULL, 0, NULL, NULL);
-	std::string strTo(sizeNeeded, 0);
-	WideCharToMultiByte(CP_UTF8, 0, wstr.c_str(), -1, &strTo[0], sizeNeeded, NULL, NULL);
-	return strTo;
+template<typename... Args>
+std::string OssFormatString(const Args&... args) {
+	std::ostringstream oss;
+	(oss << ... << args); //c++17
+	return oss.str();
 }
 
-static std::string WideStringToGBK(const std::wstring& utf16Str) {
-	// 将 UTF-16 转换为 GBK
+/// <summary>
+/// 为了在中文系统的 DebugView 内打印日文字符
+/// </summary>
+/// <param name="shiftJisStr"></param>
+/// <returns></returns>
+static std::string ConvertShiftJISToGBK(const std::string& shiftJisStr) {
+	std::wstring utf16Str = ShiftJISToUTF16(shiftJisStr);
+
 	int len = WideCharToMultiByte(936, 0, utf16Str.c_str(), -1, NULL, 0, NULL, NULL);
 	std::string gbkStr(len, '\0');
 	WideCharToMultiByte(936, 0, utf16Str.c_str(), -1, &gbkStr[0], len, NULL, NULL);
 	return gbkStr;
 }
 
-/// <summary>
-/// For showing string in DebugView on GBK System
-/// </summary>
-/// <param name="shiftJisStr"></param>
-/// <returns></returns>
-static std::string ConvertShiftJISToGBK(const std::string& shiftJisStr) {
-	// 先将 Shift-JIS 转换为 UTF-16，再转换为 GBK
-	std::wstring utf16Str = ShiftJISToUTF16(shiftJisStr);
-	return WideStringToGBK(utf16Str);
-}
-
+// TODO 1: 要达到打印调用前的函数参数 字符串或 byte，打印调用后函数参数 对比的效果。
 // for debug use
 //static void OutputDebugStringWithBytesA(LPCSTR str) {
 //	std::ostringstream oss;
@@ -157,21 +150,20 @@ LONG WINAPI FakeRegOpenKeyExA(HKEY hKey, LPCSTR lpSubKey, DWORD ulOptions, REGSA
 	if (!IniSectionExists(fullPath))
 		return RealRegOpenKeyExA(hKey, lpSubKey, ulOptions, samDesired, phkResult);
 
-	// SOURCE: The original behavior
-	auto result = RealRegOpenKeyExA(hKey, lpSubKey, ulOptions, samDesired, phkResult);
-	fakeHKeyMap[*phkResult] = fullPath;
+	// SOURCE: The original behavior 取消注释以下两行来测试真实读取注册表的情况
+	//auto result = RealRegOpenKeyExA(hKey, lpSubKey, ulOptions, samDesired, phkResult);
+	//fakeHKeyMap[*phkResult] = fullPath;
 
 	// Solution
 	// 1. an abusolute exist reg
 	//auto result = RealRegOpenKeyExA(hKey, "SOFTWARE", ulOptions, samDesired, phkResult);
 	// 2.
-	//HKEY fakeHKey = currentFakeHKey++;
-	//fakeHKeyMap[fakeHKey] = fullPathu;
-	//*phkResult = fakeHKey;
+	HKEY fakeHKey = currentFakeHKey++;
+	fakeHKeyMap[fakeHKey] = fullPath;
+	*phkResult = fakeHKey;
 
-	std::stringstream ss;
-	ss << "Open fake hKey " << *phkResult;
-	OutputDebugStringA(ss.str().c_str());
+	std::string message = OssFormatString("Open fake hKey ", *phkResult);
+	OutputDebugStringA(message.c_str());
 
 	return ERROR_SUCCESS;
 }
@@ -181,9 +173,9 @@ LONG WINAPI FakeRegCloseKey(HKEY hKey) {
 		return RealRegCloseKey(hKey);
 
 	fakeHKeyMap.erase(hKey);
-	std::stringstream ss;
-	ss << "Close hooked hKey: 0x" << std::hex << std::uppercase << reinterpret_cast<uintptr_t>(hKey);
-	OutputDebugStringA(ss.str().c_str());
+
+	std::string message = OssFormatString("Close hooked hKey: 0x", std::hex, std::uppercase, reinterpret_cast<uintptr_t>(hKey));
+	OutputDebugStringA(message.c_str());
 	return ERROR_SUCCESS;
 }
 
@@ -226,9 +218,8 @@ LONG WINAPI FakeRegQueryValueExA(HKEY hKey, LPCSTR lpValueName, LPDWORD lpReserv
 	std::string ival = ReadINIValue(fullPath, ikey);
 
 	if (!ival.empty()) {
-		std::stringstream ss;
-		ss << "Query key: " << ikey << " result: " << ival.c_str();  // 打印 std::string 结果
-		OutputDebugStringA(ss.str().c_str());
+		std::string message = OssFormatString("Query key: ", ikey, " result: ", ival.c_str());
+		OutputDebugStringA(message.c_str());
 
 		if (ival.find("hex:") == 0) {  // 处理 REG_BINARY 数据
 			auto binaryData = ParseHexData(ival);
@@ -363,9 +354,8 @@ LONG WINAPI FakeRegEnumValueA(HKEY hKey, DWORD dwIndex, LPSTR lpValueName, LPDWO
 	//	*lpType = REG_SZ;
 	//}
 
-	std::stringstream ss;
-	ss << "Enum fake hKey " << hKey << " with " << lpValueName << "(" << *lpcchValueName << ")";// Type: " << *lpType;
-	OutputDebugStringA(ss.str().c_str());
+	std::string message = OssFormatString("Enum fake hKey ", hKey, " with ", lpValueName, "(", *lpcchValueName, ")");
+	OutputDebugStringA(message.c_str());
 
 	return ERROR_SUCCESS;
 }
@@ -389,14 +379,16 @@ BOOL APIENTRY DllMain(HMODULE hModule,
 		iniFilePath = GetExecutablePath() + L"\\fakereg.ini";
 		DetourTransactionBegin();
 		DetourUpdateThread(GetCurrentThread());
+		// 游戏所需要的基本读取
 		DetourAttach(&(PVOID&)RealRegOpenKeyExA, FakeRegOpenKeyExA);
 		DetourAttach(&(PVOID&)RealRegCloseKey, FakeRegCloseKey);
 		DetourAttach(&(PVOID&)RealRegQueryValueExA, FakeRegQueryValueExA);
-
+		// 部分游戏会轮询一个HKEY
 		DetourAttach(&(PVOID&)RealRegEnumValueA, FakeRegEnumValueA);
+		// 部分游戏会写入到REG
+		DetourAttach(&(PVOID&)RealRegSetValueExA, FakeRegSetValueExA);
 
 		DetourAttach(&(PVOID&)RealRegFlushKey, FakeRegFlushKey);
-		DetourAttach(&(PVOID&)RealRegSetValueExA, FakeRegSetValueExA);
 		DetourAttach(&(PVOID&)RealRegCreateKeyExA, FakeRegCreateKeyExA);
 		DetourAttach(&(PVOID&)RealRegOpenKeyA, FakeRegOpenKeyA);
 		DetourTransactionCommit();
@@ -408,11 +400,9 @@ BOOL APIENTRY DllMain(HMODULE hModule,
 		DetourDetach(&(PVOID&)RealRegOpenKeyExA, FakeRegOpenKeyExA);
 		DetourDetach(&(PVOID&)RealRegCloseKey, FakeRegCloseKey);
 		DetourDetach(&(PVOID&)RealRegQueryValueExA, FakeRegQueryValueExA);
-
 		DetourDetach(&(PVOID&)RealRegEnumValueA, FakeRegEnumValueA);
-
-		DetourDetach(&(PVOID&)RealRegFlushKey, FakeRegFlushKey);
 		DetourDetach(&(PVOID&)RealRegSetValueExA, FakeRegSetValueExA);
+		DetourDetach(&(PVOID&)RealRegFlushKey, FakeRegFlushKey);
 		DetourDetach(&(PVOID&)RealRegCreateKeyExA, FakeRegCreateKeyExA);
 		DetourDetach(&(PVOID&)RealRegOpenKeyA, FakeRegOpenKeyA);
 		DetourTransactionCommit();
