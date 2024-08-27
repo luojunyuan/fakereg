@@ -7,6 +7,8 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "fakereg", "fakereg\fakereg.
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Detours", "extern\Detours\vc\Detours.vcxproj", "{37489709-8054-4903-9C49-A79846049FC9}"
 EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "version", "version\version.vcxproj", "{3D421A5F-DAEC-4397-A3D6-AAF06BFA841F}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x86 = Debug|x86
@@ -31,6 +33,14 @@ Global
 		{37489709-8054-4903-9C49-A79846049FC9}.Release|x86.Build.0 = ReleaseMD|Win32
 		{37489709-8054-4903-9C49-A79846049FC9}.ReleaseMD|x86.ActiveCfg = ReleaseMD|Win32
 		{37489709-8054-4903-9C49-A79846049FC9}.ReleaseMD|x86.Build.0 = ReleaseMD|Win32
+		{3D421A5F-DAEC-4397-A3D6-AAF06BFA841F}.Debug|x86.ActiveCfg = Debug|Win32
+		{3D421A5F-DAEC-4397-A3D6-AAF06BFA841F}.Debug|x86.Build.0 = Debug|Win32
+		{3D421A5F-DAEC-4397-A3D6-AAF06BFA841F}.DebugMDd|x86.ActiveCfg = Debug|Win32
+		{3D421A5F-DAEC-4397-A3D6-AAF06BFA841F}.DebugMDd|x86.Build.0 = Debug|Win32
+		{3D421A5F-DAEC-4397-A3D6-AAF06BFA841F}.Release|x86.ActiveCfg = Release|Win32
+		{3D421A5F-DAEC-4397-A3D6-AAF06BFA841F}.Release|x86.Build.0 = Release|Win32
+		{3D421A5F-DAEC-4397-A3D6-AAF06BFA841F}.ReleaseMD|x86.ActiveCfg = Release|Win32
+		{3D421A5F-DAEC-4397-A3D6-AAF06BFA841F}.ReleaseMD|x86.Build.0 = Release|Win32
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
