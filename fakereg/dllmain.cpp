@@ -7,7 +7,7 @@
 #include <map>
 #include <tuple>
 
-#include <vector>
+#include <vector> // for ParseHexData()
 
 #pragma region String Converter
 
@@ -44,8 +44,6 @@ std::string OssFormatString(const Args&... args) {
 /// <summary>
 /// 为了在中文系统的 DebugView 内打印日文字符
 /// </summary>
-/// <param name="shiftJisStr"></param>
-/// <returns></returns>
 static std::string ConvertShiftJISToGBK(const std::string& shiftJisStr) {
 	std::wstring utf16Str = ShiftJISToUTF16(shiftJisStr);
 
@@ -77,16 +75,19 @@ static void PrintBytesToDebug(LPSTR lpData, DWORD dataSize) {
 
 #pragma endregion
 
-// 原始函数指针
+// Open Close
 decltype(&RegOpenKeyExA) RealRegOpenKeyExA = RegOpenKeyExA;
 decltype(&RegCloseKey) RealRegCloseKey = RegCloseKey;
+
+// Read Write
 decltype(&RegQueryValueExA) RealRegQueryValueExA = RegQueryValueExA;
-
-decltype(&RegFlushKey) RealRegFlushKey = RegFlushKey;
-decltype(&RegSetValueExA) RealRegSetValueExA = RegSetValueExA;
-decltype(&RegCreateKeyExA) RealRegCreateKeyExA = RegCreateKeyExA;
 decltype(&RegEnumValueA) RealRegEnumValueA = RegEnumValueA;
+decltype(&RegSetValueExA) RealRegSetValueExA = RegSetValueExA;
+decltype(&RegFlushKey) RealRegFlushKey = RegFlushKey;
+// Create also write and open an key
+decltype(&RegCreateKeyExA) RealRegCreateKeyExA = RegCreateKeyExA;
 
+// Derive
 decltype(&RegOpenKeyA) RealRegOpenKeyA = RegOpenKeyA;
 
 // NOTE:
@@ -95,9 +96,9 @@ decltype(&RegOpenKeyA) RealRegOpenKeyA = RegOpenKeyA;
 
 std::wstring iniFilePath;
 std::map<HKEY, std::string> fakeHKeyMap;
-HKEY fakeHKeyBase = reinterpret_cast<HKEY>(0xDEADBEEF);  // 用于生成虚假 hKey 的基值
+HKEY fakeHKeyBase = reinterpret_cast<HKEY>(0xDEADBEEF); // 用于生成虚假 hKey 的基值
 HKEY currentFakeHKey = fakeHKeyBase;
-bool testRealRegistryEnv = false;
+bool testRealRegistryEnv = false; // 测试须同时保证文件夹下 fakereg.ini存在，且注册表值也存在
 
 #pragma region Operator to Modify ini file
 
@@ -159,7 +160,7 @@ static std::vector<BYTE> ParseHexData(const std::string& hexString) {
 		BYTE byteValue = static_cast<BYTE>(std::strtol(byteString.c_str(), nullptr, 16));
 		data.push_back(byteValue);
 
-		pos = end + 1;  // 移动到下一个字符
+		pos = end + 1;
 	}
 
 	return data;
@@ -192,35 +193,32 @@ static DWORD ReadINIValue(std::string section, std::string key, LPBYTE lpData, L
 
 	auto keyQuote = AddQuoteString(key);
 
-	auto sectionu = ShiftJISToUTF16(section);
-	auto keyu = ShiftJISToUTF16(keyQuote);
+	auto uSection = ShiftJISToUTF16(section);
+	auto uKey = ShiftJISToUTF16(keyQuote);
 
-	auto result = GetPrivateProfileStringW(sectionu.c_str(), keyu.c_str(), L"", buffer, sizeof(buffer) / sizeof(wchar_t), iniFilePath.c_str());
+	auto result = GetPrivateProfileStringW(uSection.c_str(), uKey.c_str(), L"", buffer, sizeof(buffer) / sizeof(wchar_t), iniFilePath.c_str());
 
 	if (result == 0 && buffer[0] == L'\0')
 		return 0;
 
 	auto encodeValue = WideStringToShiftJIS(buffer);
 
-	DWORD type = {};
+	DWORD type =
+		encodeValue.find("dword:") != std::string::npos ? REG_DWORD :  // 4 dword:00000000
+		encodeValue.find("hex:") != std::string::npos ? REG_BINARY : // 3 hex:00,00,00,00
+		REG_SZ;                                                        // 1
 
-	if (encodeValue.find("hex:") == 0) {  // hex:00,00,00,00
-		type = REG_BINARY;
-
+	if (type == REG_BINARY) {
 		auto binaryData = ParseHexData(encodeValue);
 		memcpy(lpData, binaryData.data(), binaryData.size());
 		*lpcbData = binaryData.size();
 	}
-	else if (encodeValue.find("dword:") == 0) {  // dword:00000000
-		type = REG_DWORD;
-
+	else if (type == REG_DWORD) {
 		DWORD dwordValue = ParseDwordData(encodeValue);
 		memcpy(lpData, &dwordValue, sizeof(DWORD));
 		*lpcbData = sizeof(DWORD);
 	}
 	else {
-		type = REG_SZ;
-
 		auto splashValue = NormalizeBackslashes(encodeValue);
 		memcpy(lpData, splashValue.c_str(), splashValue.size() + 1);
 		*lpcbData = splashValue.size() + 1;
@@ -266,11 +264,48 @@ static std::string GetNthKeyValueInSection(const std::string& sectionName, int n
 /// <summary>
 /// 交换 ini文件 key值 与注册表中 key值数据格式
 /// </summary>
-void IniKeyStringToRegFormat(const std::string& str, LPSTR lpValueName, LPDWORD lpcchValueName) {
+static void IniKeyStringToRegFormat(const std::string& str, LPSTR lpValueName, LPDWORD lpcchValueName) {
 	// The provided buffer lpcchValueName usually as 260
 
 	memcpy(lpValueName, str.c_str(), (str.size() + 1));
 	*lpcchValueName = str.size();
+}
+
+static void WriteINIValue(std::string section, std::string key, std::string value) {
+	auto keyQuote = AddQuoteString(key);
+
+	auto uSection = ShiftJISToUTF16(section);
+	auto uKey = ShiftJISToUTF16(keyQuote);
+	auto uValue = ShiftJISToUTF16(value);
+
+	WritePrivateProfileStringW(uSection.c_str(), uKey.c_str(), uValue.c_str(), iniFilePath.c_str());
+}
+
+static std::string TransValueType(DWORD type, const BYTE* lpData, DWORD cbData) {
+	std::string result;
+	char buffer[16];
+
+	if (type == REG_DWORD) { // dword:00000000
+		// 假设lpData至少有4个字节
+		DWORD dwValue = *(DWORD*)lpData;
+		snprintf(buffer, sizeof(buffer), "dword:%08X", dwValue);
+		result = buffer;
+	}
+	else if (type == REG_BINARY) { // hex:00,00,00,00
+		result = "hex:";
+		for (DWORD i = 0; i < cbData; ++i) {
+			snprintf(buffer, sizeof(buffer), "%02X", lpData[i]);
+			result += buffer;
+			if (i < cbData - 1) {
+				result += ",";
+			}
+		}
+	}
+	else if (type == REG_SZ) {
+		result = std::string((const char*)lpData);
+	}
+
+	return result;
 }
 
 #pragma endregion
@@ -304,7 +339,7 @@ LONG WINAPI FakeRegOpenKeyExA(HKEY hKey, LPCSTR lpSubKey, DWORD ulOptions, REGSA
 	fakeHKeyMap[fakeHKey] = fullPath;
 	*phkResult = fakeHKey;
 
-	OutputDebugStringA(OssFormatStringNormal("┌Open fake hKey: 0x", *phkResult).c_str());
+	OutputDebugStringA(OssFormatStringNormal("┌Open fake hKey: 0x", *phkResult, " | ", fullPath).c_str());
 
 	return ERROR_SUCCESS;
 }
@@ -315,18 +350,13 @@ LONG WINAPI FakeRegCloseKey(HKEY hKey) {
 
 	fakeHKeyMap.erase(hKey);
 
+	if (testRealRegistryEnv)
+		return ERROR_SUCCESS;
+
 	OutputDebugStringA(OssFormatStringNormal("└Close hooked hKey: 0x", std::hex, std::uppercase, reinterpret_cast<uintptr_t>(hKey)).c_str());
 	return ERROR_SUCCESS;
 }
 
-// LSTATUS RegQueryValueExA(
-//	[in]                HKEY    hKey,
-//	[in, optional]      LPCSTR  lpValueName,     // key
-//	                    LPDWORD lpReserved,
-//	[out, optional]     LPDWORD lpType,          // 传入设置为 NULL，表示不关心
-//	[out, optional]     LPBYTE  lpData,          // value 空白说明00
-//	[in, out, optional] LPDWORD lpcbData         // 接收值缓冲区大小，一般传入260，会在调用后调整为真实值，如 ".\" -> 3
-//);
 LONG WINAPI FakeRegQueryValueExA(HKEY hKey, LPCSTR lpValueName, LPDWORD lpReserved, LPDWORD lpType, LPBYTE lpData, LPDWORD lpcbData) {
 	if (fakeHKeyMap.find(hKey) == fakeHKeyMap.end())
 		return RealRegQueryValueExA(hKey, lpValueName, lpReserved, lpType, lpData, lpcbData);
@@ -342,7 +372,7 @@ LONG WINAPI FakeRegQueryValueExA(HKEY hKey, LPCSTR lpValueName, LPDWORD lpReserv
 	std::string encodeValue = {};
 
 	std::string fullPath = fakeHKeyMap.find(hKey)->second;
-	DWORD type = ReadINIValue(fullPath, std::string(lpValueName), lpData, lpcbData); // 不处理  ERROR_MORE_DATA.
+	DWORD type = ReadINIValue(fullPath, std::string(lpValueName), lpData, lpcbData); // 不处理 ERROR_MORE_DATA
 
 	if (type == 0) // __KEY_NOT_FOUND__
 		return ERROR_FILE_NOT_FOUND;
@@ -352,7 +382,7 @@ LONG WINAPI FakeRegQueryValueExA(HKEY hKey, LPCSTR lpValueName, LPDWORD lpReserv
 		*lpType = type;
 	}
 
-	OutputDebugStringA(OssFormatStringNormal("|Query key: ", lpValueName, " value: ", lpData, "(", *lpcbData, ")").c_str());
+	OutputDebugStringA(OssFormatStringNormal("│Query key: ", lpValueName, " value: ", lpData, "(", *lpcbData, ")").c_str());
 
 	return ERROR_SUCCESS;
 }
@@ -364,10 +394,10 @@ LONG WINAPI FakeRegEnumValueA(HKEY hKey, DWORD dwIndex, LPSTR lpValueName, LPDWO
 	if (testRealRegistryEnv)
 	{
 		if (lpData == nullptr) OutputDebugStringA(OssFormatString("FakeRegEnumValueA  input", hKey, dwIndex, lpValueName, *lpcchValueName, lpReserved, *lpType, "Null", "Null").c_str());
-		else OutputDebugStringA(OssFormatString("FakeRegEnumValueA  input", hKey, dwIndex, lpValueName, *lpcchValueName, lpReserved, *lpType, lpData, *lpcbData).c_str());
+		else OutputDebugStringA(OssFormatString("FakeRegEnumValueA  input", hKey, dwIndex, ConvertShiftJISToGBK(lpValueName), *lpcchValueName, lpReserved, *lpType, lpData, *lpcbData).c_str());
 		auto result = RealRegEnumValueA(hKey, dwIndex, lpValueName, lpcchValueName, lpReserved, lpType, lpData, lpcbData);
 		if (lpData == nullptr) OutputDebugStringA(OssFormatString("FakeRegEnumValueA output", hKey, dwIndex, lpValueName, *lpcchValueName, lpReserved, *lpType, "Null", "Null", result).c_str());
-		else OutputDebugStringA(OssFormatString("FakeRegEnumValueA output", hKey, dwIndex, lpValueName, *lpcchValueName, lpReserved, *lpType, lpData, *lpcbData).c_str());
+		else OutputDebugStringA(OssFormatString("FakeRegEnumValueA output", hKey, dwIndex, ConvertShiftJISToGBK(lpValueName), *lpcchValueName, lpReserved, *lpType, lpData, *lpcbData).c_str());
 		return result;
 	}
 
@@ -378,7 +408,7 @@ LONG WINAPI FakeRegEnumValueA(HKEY hKey, DWORD dwIndex, LPSTR lpValueName, LPDWO
 
 	IniKeyStringToRegFormat(key, lpValueName, lpcchValueName);
 
-	OutputDebugStringA(OssFormatStringNormal("|Enum index: ", dwIndex, " ", lpValueName, "(", *lpcchValueName, ")").c_str());
+	OutputDebugStringA(OssFormatStringNormal("│Enum index: ", dwIndex, " ", lpValueName, "(", *lpcchValueName, ")").c_str());
 
 	// May also read value in the future for -> LPDWORD lpType, LPBYTE lpData, LPDWORD lpcbData
 	//if (lpData != nullptr) { auto type = ReadINIValue(section, key, lpData, lpcbData); if (lpType == nullptr) lpType = type; }
@@ -386,20 +416,37 @@ LONG WINAPI FakeRegEnumValueA(HKEY hKey, DWORD dwIndex, LPSTR lpValueName, LPDWO
 	return ERROR_SUCCESS;
 }
 
-// TODO 5:
 LONG WINAPI FakeRegSetValueExA(HKEY hKey, LPCSTR lpValueName, DWORD Reserved, DWORD dwType, const BYTE* lpData, DWORD cbData) {
-	OutputDebugString(L"-Call FakeRegSetValueExA");
-	return RealRegSetValueExA(hKey, lpValueName, Reserved, dwType, lpData, cbData);
+	if (fakeHKeyMap.find(hKey) == fakeHKeyMap.end())
+		return RealRegSetValueExA(hKey, lpValueName, Reserved, dwType, lpData, cbData);
+
+	// lpValueName(Key) + dwType(3)
+	if (testRealRegistryEnv)
+	{
+		OutputDebugStringA(OssFormatString("FakeRegSetValueExA  input", hKey, lpValueName, Reserved, dwType, lpData, cbData).c_str());
+		auto result = RealRegSetValueExA(hKey, lpValueName, Reserved, dwType, lpData, cbData);
+		OutputDebugStringA(OssFormatString("FakeRegSetValueExA output", hKey, lpValueName, Reserved, dwType, lpData, cbData, result).c_str());
+		return result;
+	}
+
+	std::string section = fakeHKeyMap.find(hKey)->second;
+	std::string value = TransValueType(dwType, lpData, cbData);
+	WriteINIValue(section, lpValueName, value);
+
+	OutputDebugStringA(OssFormatStringNormal("│Set key: ", lpValueName, " value: ", value).c_str());
+
+	return ERROR_SUCCESS;
 }
 LONG WINAPI FakeRegFlushKey(HKEY hKey) {
 	if (fakeHKeyMap.find(hKey) == fakeHKeyMap.end())
 		return RealRegFlushKey(hKey);
-	return RealRegFlushKey(hKey);
 
-	std::string message = OssFormatString("Flush fake hKey: ", hKey);
-	OutputDebugStringA(message.c_str());
+	if (testRealRegistryEnv)
+		return ERROR_SUCCESS;
+
+	OutputDebugStringA(OssFormatStringNormal("│Flush fake hKey: 0x", hKey).c_str());
 	return ERROR_SUCCESS;
-}
+} // 会在 Flush 后再 Close HKEY
 
 LONG WINAPI FakeRegCreateKeyExA(HKEY hKey, LPCSTR lpSubKey, DWORD Reserved, LPSTR lpClass, DWORD dwOptions, REGSAM samDesired, LPSECURITY_ATTRIBUTES lpSecurityAttributes, PHKEY phkResult, LPDWORD lpdwDisposition) {
 	OutputDebugString(L"-Call FakeRegCreateKeyExA");
@@ -436,6 +483,7 @@ BOOL APIENTRY DllMain(HMODULE hModule,
 		DetourAttach(&(PVOID&)RealRegFlushKey, FakeRegFlushKey);
 
 		DetourAttach(&(PVOID&)RealRegCreateKeyExA, FakeRegCreateKeyExA);
+
 		DetourAttach(&(PVOID&)RealRegOpenKeyA, FakeRegOpenKeyA);
 		DetourTransactionCommit();
 		break;
@@ -456,3 +504,12 @@ BOOL APIENTRY DllMain(HMODULE hModule,
 	}
 	return TRUE;
 }
+
+// LSTATUS RegQueryValueExA(
+//	[in]                HKEY    hKey,
+//	[in, optional]      LPCSTR  lpValueName,     // key
+//	                    LPDWORD lpReserved,
+//	[out, optional]     LPDWORD lpType,          // 传入设置为 NULL，表示不关心
+//	[out, optional]     LPBYTE  lpData,          // value 空白说明00
+//	[in, out, optional] LPDWORD lpcbData         // 接收值缓冲区大小，一般传入260，会在调用后调整为真实值，如 ".\" -> 3
+//);

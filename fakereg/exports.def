@@ -1,3 +1,5 @@
 LIBRARY fakereg
 EXPORTS
 F0
+F1
+F2

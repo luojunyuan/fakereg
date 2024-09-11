@@ -13,3 +13,11 @@ extern "C" __declspec(dllexport) HINSTANCE WINAPI F0(
 ) {
 	return ShellExecuteA(hwnd, lpOperation, lpFile, lpParameters, lpDirectory, nShowCmd);
 }
+
+extern "C" __declspec(dllexport) HINSTANCE WINAPI F1() {
+	return (HINSTANCE)DragFinish;
+}
+
+extern "C" __declspec(dllexport) HINSTANCE WINAPI F2() {
+	return (HINSTANCE)DragQueryFileA;
+}
