@@ -3,15 +3,13 @@
 #include <windows.h>
 #include <shellapi.h>
 
-extern "C" __declspec(dllexport) HINSTANCE WINAPI F0(
-	HWND hwnd,
-	LPCSTR lpOperation,
-	LPCSTR lpFile,
-	LPCSTR lpParameters,
-	LPCSTR lpDirectory,
-	INT nShowCmd
-) {
-	return ShellExecuteA(hwnd, lpOperation, lpFile, lpParameters, lpDirectory, nShowCmd);
+//extern "C" __declspec(dllexport) HINSTANCE WINAPI F0() {
+//	return (HINSTANCE)ShellExecuteA;
+//}
+extern "C"  __declspec(dllexport, naked) void WINAPI F0() {
+	__asm {
+		jmp ShellExecuteA
+	}
 }
 
 extern "C" __declspec(dllexport) HINSTANCE WINAPI F1() {
@@ -21,3 +19,13 @@ extern "C" __declspec(dllexport) HINSTANCE WINAPI F1() {
 extern "C" __declspec(dllexport) HINSTANCE WINAPI F2() {
 	return (HINSTANCE)DragQueryFileA;
 }
+
+extern "C" __declspec(dllexport, naked) void WINAPI F3() {
+	__asm {
+		jmp SHAppBarMessage
+	}
+}
+
+//extern "C" __declspec(dllexport) HINSTANCE WINAPI F4() {
+//	return (HINSTANCE)DirectInput8Create;
+//}
