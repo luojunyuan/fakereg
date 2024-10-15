@@ -37,9 +37,9 @@ jobs:
       uses: microsoft/setup-msbuild@v1.0.2
 
     - name: Build Detours
-      working-directory: ${{env.GITHUB_WORKSPACE}}/extern/Detours
-      run: |
-        nmake /f Makefile DETOURS_TARGET_PROCESSOR=X86
+      # working-directory: ${{env.GITHUB_WORKSPACE}}/extern/Detours
+      working-directory: D:\a\fakereg\fakereg\extern\Detours
+      run: nmake /f Makefile DETOURS_TARGET_PROCESSOR=X86
 
     - name: Build
       working-directory: ${{env.GITHUB_WORKSPACE}}
