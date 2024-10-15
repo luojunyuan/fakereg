@@ -33,15 +33,11 @@ jobs:
         # git clone detours 子模块
         submodules: true
 
-    - name: Install Visual Studio Build Tools
-      run: |
-        choco install visualstudio2022buildtools --package-parameters "--add Microsoft.VisualStudio.Component.VC.Tools.x86.x64"
-
-    - name: Set up Developer Command Prompt
-      run: |
-        echo "::add-path::C:\Program Files\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build"
-        call "C:\Program Files\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvarsall.bat" x86
-
+    - name: Enable Developer Command Prompt
+      uses: ilammy/msvc-dev-cmd@v1.13.0
+  
+    # - name: Add MSBuild to PATH
+    #   uses: microsoft/setup-msbuild@v1.0.2
 
     - name: Build Detours
       # working-directory: ${{env.GITHUB_WORKSPACE}}/extern/Detours
